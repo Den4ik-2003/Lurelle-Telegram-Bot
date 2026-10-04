@@ -27,7 +27,7 @@ from aiogram.types import (
 )
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo.errors import PyMongoError
+from pymongo.errors import ConfigurationError, PyMongoError
 
 try:
     from zoneinfo import ZoneInfo
@@ -126,8 +126,13 @@ def init_mongo():
         maxPoolSize=20,
         retryWrites=True,
     )
-    # Назва бази береться з MONGO_URI (.../назва_бази?...) — та сама, що й на сервері сайту
-    db = mongo_client.get_default_database()
+    # Назва бази береться з MONGO_URI (.../назва_бази?...). Якщо її там немає —
+    # з MONGO_DB_NAME, а якщо й цієї змінної немає, то "test" (так Mongoose
+    # називає базу за замовчуванням на сервері сайту).
+    try:
+        db = mongo_client.get_default_database()
+    except ConfigurationError:
+        db = mongo_client[os.environ.get("MONGO_DB_NAME", "test")]
     orders_col = db["orders"]
     products_col = db["products"]
     visitors_col = db["visitors"]
