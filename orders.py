@@ -286,6 +286,9 @@ def ikb_order_actions(order_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🚚 Вартість доставки", callback_data=f"setdelivery:{order_id}"),
         InlineKeyboardButton(text="📝 Нотатка клієнту", callback_data=f"setnote:{order_id}"),
     ])
+    rows.append([
+        InlineKeyboardButton(text="🗑 Видалити замовлення", callback_data=f"delask:{order_id}"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -829,6 +832,58 @@ async def set_status_cb(cb: CallbackQuery):
             pass
 
 
+@dp.callback_query(F.data.startswith("delask:"))
+async def delete_ask_cb(cb: CallbackQuery):
+    try:
+        order_id = cb.data.split(":")[1]
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Так, видалити", callback_data=f"delyes:{order_id}"),
+            InlineKeyboardButton(text="↩️ Скасувати", callback_data=f"delno:{order_id}"),
+        ]])
+        await cb.message.edit_reply_markup(reply_markup=kb)
+        await cb.answer("Видалити це замовлення назавжди?", show_alert=True)
+    except Exception:
+        logger.exception("delete_ask_cb failed")
+        try:
+            await cb.answer(DB_ERROR_TEXT, show_alert=True)
+        except TelegramAPIError:
+            pass
+
+
+@dp.callback_query(F.data.startswith("delno:"))
+async def delete_cancel_cb(cb: CallbackQuery):
+    try:
+        order_id = cb.data.split(":")[1]
+        await cb.message.edit_reply_markup(reply_markup=ikb_order_actions(order_id))
+        await cb.answer("Скасовано")
+    except Exception:
+        logger.exception("delete_cancel_cb failed")
+        try:
+            await cb.answer(DB_ERROR_TEXT, show_alert=True)
+        except TelegramAPIError:
+            pass
+
+
+@dp.callback_query(F.data.startswith("delyes:"))
+async def delete_confirm_cb(cb: CallbackQuery):
+    try:
+        order_id = cb.data.split(":")[1]
+        result = await db_call(orders_col.delete_one({"_id": ObjectId(order_id)}))
+        short = order_id[-6:].upper()
+        if result.deleted_count:
+            await cb.message.edit_text(f"🗑 Замовлення #{short} видалено.", reply_markup=None)
+            await cb.answer("Видалено")
+        else:
+            await cb.message.edit_text(f"ℹ️ Замовлення #{short} уже видалене.", reply_markup=None)
+            await cb.answer()
+    except Exception:
+        logger.exception("delete_confirm_cb failed")
+        try:
+            await cb.answer(DB_ERROR_TEXT, show_alert=True)
+        except TelegramAPIError:
+            pass
+
+
 @dp.callback_query(F.data.startswith("setdelivery:"))
 async def set_delivery_start(cb: CallbackQuery, state: FSMContext):
     try:
@@ -1002,7 +1057,8 @@ async def site_health_task():
 
 
 async def ping(request):
-    return web.Response(status=204)
+    # Мінімальна відповідь для cron-job.org: 200 і два символи
+    return web.Response(text="ok")
 
 
 async def main():
@@ -1017,6 +1073,7 @@ async def main():
 
     app = web.Application()
     app.router.add_get("/", ping)
+    app.router.add_get("/health", ping)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
